@@ -15,19 +15,28 @@ The device runs on 3 AA batteries for 2-4 years. The project documentation and c
 
 The build system is PlatformIO. The binary is at `~/.platformio/penv/bin/pio`.
 
-**ESP8266 firmware:**
+**ESP8266 firmware** (default env: `waterius_2`):
 ```bash
-~/.platformio/penv/bin/pio run -d ESP8266                    # build (default env: esp01_1m)
-~/.platformio/penv/bin/pio run -d ESP8266 -e waterius_2      # build for Waterius-2 (NodeMCU)
-~/.platformio/penv/bin/pio run -d ESP8266 -t upload           # flash firmware
-~/.platformio/penv/bin/pio run -d ESP8266 -t uploadfs         # flash LittleFS filesystem
+~/.platformio/penv/bin/pio run -d ESP8266                    # build default (waterius_2 / NodeMCU)
+~/.platformio/penv/bin/pio run -d ESP8266 -e esp01_1m        # build for Classic Waterius (ESP-01)
+~/.platformio/penv/bin/pio run -d ESP8266 -t upload          # flash firmware
+~/.platformio/penv/bin/pio run -d ESP8266 -t uploadfs        # flash LittleFS filesystem
 ```
+
+A third env `nodemcuv2` exists for bench debugging on a bare NodeMCU (verbose WiFi/core logs).
 
 **Attiny85 firmware:**
 ```bash
 ~/.platformio/penv/bin/pio run -d Attiny85                    # build
 ~/.platformio/penv/bin/pio run -d Attiny85 -t upload          # flash via USBasp
 ```
+
+**Tests** — host-side unit tests (googletest) for OTA URL parsing:
+```bash
+~/.platformio/penv/bin/pio test -d ESP8266 -e native          # runs test/test_ota/*
+```
+
+**OTA build/deploy:** `ESP8266/scripts/build_and_deploy.sh [version]` builds the `waterius_2` env and stages firmware/filesystem images in `ESP8266/ota/` for upload to the OTA server (URL hardcoded in the script — debug vs. release).
 
 **Local secrets:** Copy `ESP8266/secrets.ini.template` to `ESP8266/secrets.ini` and fill in credentials.
 
@@ -81,9 +90,11 @@ E:FF, H:DF, L:62
 - `ha/` — Home Assistant MQTT integration
   - `subscribe.cpp` — MQTT subscription and callback handling
   - `apply_settings.cpp` — Applies settings received remotely
-- `senders/`: HTTP/MQTT/Waterius.ru data senders
-- `json.cpp` — Serializes all telemetry into a JsonDocument via `get_json_data()`
-- `data/`: Web interface HTML files (served via LittleFS)
+  - `publish_data.cpp` / `publish_discovery.cpp` — Publishes telemetry and HA auto-discovery payloads
+- `senders/` — outbound transports: `sender_http.h`, `sender_mqtt.h`, `sender_waterius.h`, dispatched from `send_data.cpp`
+- `json.cpp` — Serializes all telemetry into a JsonDocument via `get_json_data()` (single source of truth for HTTP/MQTT payloads)
+- `ota_update.cpp` / `ota_parse.h` — OTA update flow; URL parsing is unit-tested in `test/test_ota`
+- `data/` — Web interface HTML files (served via LittleFS, flashed via `uploadfs`)
 
 ### Attiny85 Source Structure
 - `main.cpp`: Counter logic, sleep management, I2C slave

@@ -16,6 +16,7 @@
 #include "config.h"
 #include "wleds.h"
 #include "ota_update.h"
+#include "flash_reset.h"
 
 MasterI2C masterI2C;     // Для общения с Attiny85 по i2c
 AttinyData data;         // Данные от Attiny85 при включении
@@ -185,6 +186,10 @@ void loop()
     // { 0xC4, "Giantec Semiconductor, Inc." }, https://github.com/elitak/freeipmi/blob/master/libfreeipmi/spec/ipmi-jedec-manufacturer-identification-code-spec.c
     if (vendor_id != 0xC4)
     {
+        // JEDEC software reset SPI flash (0x66+0x99) перед снятием EN.
+        // Workaround для модулей с залипающей flash (BoyaMicro 25Q80ES*, vendor 0x68).
+        flash_software_reset();
+
         // Спим до следущего включения EN. (выключили Instant не ждет 92мс)
         ESP.deepSleepInstant(0, RF_DEFAULT);
     }
