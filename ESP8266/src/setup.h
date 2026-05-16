@@ -9,23 +9,17 @@
 
 /*
 Версии прошивки для ESP
-1.1.20 - 2026.01.31 - Anat0l
-                      1. Поддерка получения автоматической настройки сервера HA на котором присутствует интеграция для работы с устройствами waterius (mDNS/Zeroconf)
-                      2. Добавлена поддержка получения/изменения настроек от сервера HTTP/HTTPS. В текущей реализации сервера отсутствует. 
-                         Реализована в интеграции с HomeAssistant неполностью, только базовые настройки.
-                      3. Исправлено добавление сенсоров тепла в MQTT
-                         https://github.com/dontsovcmc/waterius/issues/356
-                         Не совсем понятно, но может быть ... 
-                         https://github.com/dontsovcmc/waterius/issues/358
-                      4. Настройки по HTTP/HTTPS Применяются и обновляются на сервере с одного нажатия кнопки конфигурации
-                         https://github.com/dontsovcmc/waterius/issues/362
-                      5. Передача показаний только при изменении счетчика
-                         https://github.com/dontsovcmc/waterius/issues/361
-                      6. Испавлена ошибка при изменении сразу двух типипов счетчика в MQTT
-                         https://github.com/dontsovcmc/waterius/issues/360
-                      7. Синхронизация времени раз в неделю с сервера NTP или при настройке или нажатии кнопки
-                         https://github.com/dontsovcmc/waterius/issues/357
-                      8. Исправлена ошибка наименования идентификаторов сенсоров в HA при добавлении через MQTT
+
+2.0.34  - 2026.04.01 - dontsovcmc, Shagrat2
+                      1. Настройка параметров с сервера (и по mqtt)
+                      2. (Waterius-2) обновление прошивки 
+                      3. Оптимизация памяти
+
+2.0.0   - прошивки для платы Waterius-2
+
+1.1.20  - 2026.02.15 - dontsovcmc, Anat0l
+                      1. добавлен default_entity_id для HomeAssistant
+                      2. retain в MQTT можно отключить
 
 1.1.19  - 2025.11.07 - dontsovcmc
                       1. Пароль от Wi-Fi и MQTT в интерфейс передаётся *******.
@@ -303,8 +297,6 @@
 
 #define SERVER_TIMEOUT 12000UL // Время ответа сервера, ms
 
-#define REMOTE_CONFIG_MAX_SIZE 5120UL // Максимальный размер JSON конфигурации от сервера, байт (5 KB)
-
 #define I2C_SLAVE_ADDR 10 // i2c адрес Attiny85
 
 #define VER_8 8
@@ -320,8 +312,8 @@
 #define HOST_LEN 64
 
 #define COMPANY_LEN 20
-#define PLACE_LEN 20
-#define BLYNK_RESERVED 58
+#define PLACE_LEN 40
+#define BLYNK_RESERVED 38
 
 
 #define MQTT_LOGIN_LEN 32
@@ -358,12 +350,6 @@
 #define DEFAULT_WAKEUP_PERIOD_MIN 1440
 #endif
 
-// Константы для режима "только при потреблении воды"
-// Минимальный период пробуждения в этом режиме, минут
-#define MIN_CONSUMPTION_WAKE_PERIOD_MIN 5
-// Максимальный период без связи (heartbeat), минут (24 часа)
-#define MAX_CONSUMPTION_WAKE_PERIOD_MIN 1440
-
 #define AUTO_IMPULSE_FACTOR 3
 #define AS_COLD_CHANNEL 7
 
@@ -378,21 +364,42 @@
 #define DEFAULT_MASK "255.255.255.0"
 #define DEFAULT_NTP_SERVER "ru.pool.ntp.org"
 
-#ifndef LED_PIN
-#define LED_PIN 1
-#endif
+
+// model
+#define WATERIUS_MODEL_1 0
+#define WATERIUS_MODEL_2 2
+
 
 // attiny85
 #define SETUP_MODE 1
 #define TRANSMIT_MODE 2
 #define MANUAL_TRANSMIT_MODE 3
 
-// Время работы устройства в различных режимах
-#define SETUP_TIME_SEC 600UL // На какое время Attiny включает ESP в режиме настройки (файл Attiny85\src\Setup.h)
+// waterius-2
+#define CH0_LED_PIN 12
+#define CH1_LED_PIN 13
+#define BUTTON_STATE_PIN 14
 
-// model
-#define WATERIUS_CLASSIC 0
-#define WATERIUS_4C2W 1
+#if WATERIUS_MODEL == WATERIUS_MODEL_1
+#define GREEN_LED_PIN 1
+#define ERROR_RED_LED_PIN 1
+#endif
+#if WATERIUS_MODEL == WATERIUS_MODEL_2
+#define GREEN_LED_PIN 19
+#define ERROR_RED_LED_PIN CH0_LED_PIN 
+#endif
+
+/*
+    Статус обновления прошивки
+ */
+enum OtaError
+{
+    OTA_ERR_NONE = 0,
+    OTA_ERR_PARSE = 1,
+    OTA_ERR_FS_UPDATE = 2,
+    OTA_ERR_FW_UPDATE = 3,
+    OTA_ERR_LOW_BATTERY = 4
+};
 
 /*
    Вход attiny
@@ -426,9 +433,6 @@ enum CounterName
     HEAT_KWT = 7
 };
 
-// Максимальное значение CounterName (последний элемент enum)
-constexpr uint8_t COUNTER_NAME_MAX = CounterName::HEAT_KWT;
-
 
 // согласно
 enum DataType
@@ -447,8 +451,6 @@ enum DataType
     ELECTRICITY_TOTAL = 11,  // not used here
     HEATING_KWT = 12
 };
-
-
 
 struct CalculatedData
 {
@@ -563,22 +565,6 @@ struct Settings
     uint16_t period_min_tuned = DEFAULT_WAKEUP_PERIOD_MIN;
 
     /*
-    Выходить на связь только при потреблении воды.
-    Если потребления нет - связь раз в 24 часа (heartbeat).
-    0 = выключено (отправка каждый период)
-    1 = включено (отправка только при потреблении или раз в 24ч)
-    */
-    uint8_t wake_on_consumption_only = 0;
-    
-    /*
-    Счётчик пробуждений без отправки данных (для режима wake_on_consumption_only).
-    Используется для определения необходимости heartbeat (раз в 24ч).
-    Сбрасывается после каждой успешной отправки.
-    uint16_t т.к. при wakeup_per_min=5 требуется 288 пробуждений для 24ч (>255).
-    */
-    uint16_t wakeups_without_send = 0;
-
-    /*
     Время последней отправки по расписанию
     */
     time_t last_send = 0; // Size of time_t: 8
@@ -633,28 +619,28 @@ struct Settings
     /* Включение передачи по mqtt */
     uint8_t mqtt_on = (uint8_t) false;
     
-    /* Флаг: устройство перезагружается после применения конфигурации с сервера.
-       Используется для защиты от зацикливания при restart.
-       0 = обычное пробуждение, 1 = перезагрузка после применения конфига */
-    uint8_t config_restart_pending = 0;
-    
+    /* Код ошибки обновления прошивки */
+    uint8_t ota_error = OTA_ERR_NONE;
+
     /* Включение DHCP или статических настроек */
     uint8_t dhcp_off = (uint8_t) false;
-    
-    /* Поиск и использование MDNS серверов в локальной сети при первом подключении к сети */
-    uint8_t mdns_on = (uint8_t) true;
+
+    /* Retain сообщения MQTT */
+    uint8_t mqtt_retain = (uint8_t)true;
 
     time_t base_time = 0; // Size of time_t: 8
-    
-    /* Время последней успешной NTP синхронизации.
-       Используется для синхронизации раз в неделю вместо каждого пробуждения. */
-    time_t last_ntp_sync = 0; // Size of time_t: 8
-    
+
+    /*
+    Поправочный коэффициент для voltage Attiny в процентах (100 = без коррекции)
+    */
+    uint8_t voltage_cal = 100;
+
+    uint8_t reserved8 = 0;
     /*
     Зарезервируем кучу места, чтобы не писать конвертер конфигураций.
     Будет актуально для On-the-Air обновлений
     */
-    uint8_t reserved9[59] = {0}; //  Было 76, -8 для last_ntp_sync, -8 для выравнивания time_t , -1 для wakeups_without_send uint16
+    uint8_t reserved9[74] = {0};
 
 }; // 960 байт
 

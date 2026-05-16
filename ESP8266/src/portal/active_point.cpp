@@ -14,10 +14,11 @@
 #include "config.h"
 #include "wifi_helpers.h"
 #include "resources.h"
+#include "ha/resources.h"
 #include "active_point_api.h"
 #include "active_point.h"
 
-// SETUP_TIME_SEC и MANUAL_TRANSMIT_TIME_SEC определены в setup.h
+#define SETUP_TIME_SEC 600UL // На какое время Attiny включает ESP (файл Attiny85\src\Setup.h)
 
 bool exit_portal_flag = false;
 bool start_connect_flag = false;
@@ -48,6 +49,8 @@ String template_bool(const uint8_t value)
  */
 String replace_value(const String &var)
 {
+    if (var.indexOf('%') < 0)
+        return var;
     String out(var);
     out.replace(F("%"), F("%%"));
     return out;
@@ -119,6 +122,10 @@ String processor(const String &var)
     return processor_main(var);
 }
 
+/**
+ *  Функция возвращающая текстовое значение параметра по его имени. 
+ *  Используется для отрисовки статических html страниц portal по ключевым словам %keyword% 
+ */
 String processor_main(const String &var, const uint8_t input)
 {   
     if (var == FPSTR(PARAM_VERSION))
@@ -236,11 +243,8 @@ String processor_main(const String &var, const uint8_t input)
     else if (var == FPSTR(PARAM_MAC_ADDRESS))
         return WiFi.macAddress();
 
-    else if (var == FPSTR(PARAM_WAKEUP_PER_MIN))
+    else if (var == FPSTR(s_period_min))
         return String(sett.wakeup_per_min);
-    
-    else if (var == FPSTR(PARAM_WAKE_ON_CONSUMPTION_ONLY))
-        return template_bool(sett.wake_on_consumption_only);
     
     else if (var == FPSTR(PARAM_PLACE))
         return String(sett.place);
@@ -250,6 +254,8 @@ String processor_main(const String &var, const uint8_t input)
 
     else if (var == FPSTR(PARAM_MQTT_AUTO_DISCOVERY))
         return template_bool(sett.mqtt_auto_discovery);
+    else if (var == FPSTR(PARAM_MQTT_RETAIN))
+        return template_bool(sett.mqtt_retain);
     else if (var == FPSTR(PARAM_MQTT_DISCOVERY_TOPIC))
         return replace_value(sett.mqtt_discovery_topic);
 
@@ -351,10 +357,7 @@ void on_root(AsyncWebServerRequest *request)
 }
 
 void start_active_point(Settings &sett, CalculatedData &cdata)
-{   
-    //Т.к. интерфейс берёт данные из runtime_data, то туда нужно загрузить их
-    runtime_data = data;
-
+{
     if (!LittleFS.begin())
     {
         LOG_INFO(F("FS: Mounting LittleFS error"));
@@ -583,6 +586,7 @@ void start_active_point(Settings &sett, CalculatedData &cdata)
 
         if (start_connect_flag)
         {
+            WiFi.scanDelete();  // free scan resources before connecting to reduce WiFi SDK heap pressure
             wifi_connect(sett, WIFI_AP_STA);
             wifi_connect_status = WiFi.status();
             start_connect_flag = false;
@@ -604,4 +608,7 @@ void start_active_point(Settings &sett, CalculatedData &cdata)
     dns->stop();
     delete server;
     delete dns;
+
+    sett.setup_time = millis();
+    sett.setup_finished_counter++;
 };
