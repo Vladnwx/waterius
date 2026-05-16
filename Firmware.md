@@ -4,6 +4,67 @@
 2. Скомпилировать исходный код в platformio (cli или visual studio code)
 3. Скомпилировать исходный код в Arduino IDE
 
+# Подготовка среды для прошивки (Windows 11)
+
+Для работы вам необходимо подготовить программное обеспечение и установить драйверы для используемых программаторов.
+
+---
+
+### Установка инструментов через терминал
+
+Запустите **PowerShell** от имени администратора и выполните команды ниже.
+
+#### Одной строкой (Все сразу):
+```powershell
+winget install AVRDudes.AVRDUDE Akeo.Zadig astral-sh.uv Python.Python.3.14; uv tool install esptool
+```
+
+#### По отдельности с пояснениями:
+
+*   **AVRDUDE** — утилита для работы с USBasp и контроллерами AVR:
+    ```powershell
+    winget install AVRDudes.AVRDUDE
+    ```
+*   **Zadig** — инсталлятор универсальных драйверов для USBasp:
+    ```powershell
+    winget install Akeo.Zadig
+    ```
+*   **uv** — быстрый менеджер пакетов для Python:
+    ```powershell
+    winget install astral-sh.uv
+    ```
+*   **Python 3.14** — необходимая среда исполнения :
+    ```powershell
+    winget install Python.Python.3.14
+    ```
+*   **esptool** — прошивальщик для чипов ESP32 / ESP8266:
+    ```powershell
+    uv tool install esptool
+    ```
+
+---
+
+### 🔌 Установка драйверов (Ручной этап)
+
+#### 1. Драйвер для USBasp
+После установки **Zadig** через терминал:
+1. Подключите **USBasp** к компьютеру.
+2. Запустите Zadig.
+3. Выберите `Options` -> `List All Devices`.
+4. В списке выберите `USBasp`.
+5. Установите тип драйвера: `libusb-win32`.
+6. Нажмите **Replace Driver**.
+
+#### Драйвер для CH340 (USB-Serial)
+Для работы с COM-портом скачайте и запустите официальный установщик:
+*   🔗 **[Скачать драйвер CH340](https://www.wch-ic.com/download/file?id=270)**
+
+---
+
+### Проверка готовности
+*   Для проверки **USBasp** введите: `avrdude -c usbasp -p m328p`
+*   Для проверки **CH340** проверьте наличие порта в: `Диспетчер устройств -> Порты (COM и LPT)`
+
 ## Чем прошить 
 #### attiny:
 - Программатором USBAsp
