@@ -57,6 +57,7 @@ bool init_config(Settings &sett)
     sett.http_on = (uint8_t)false;
     sett.mqtt_on = (uint8_t)false;
     sett.dhcp_off = (uint8_t)false;
+    sett.mqtt_retain = (uint8_t)true;
 
     //можно оптимизировать и загружать из PROGMEM, но ради 2х полей смысла не вижу
     //static const char WATERIUS_DEFAULT_DOMAIN[] PROGMEM =  "https://cloud.waterius.ru"
@@ -208,6 +209,7 @@ bool load_config(Settings &sett)
             LOG_INFO(F("host=") << sett.mqtt_host << F(" port=") << sett.mqtt_port);
             LOG_INFO(F("login=") << sett.mqtt_login << F(" pass=") << sett.mqtt_password);
             LOG_INFO(F("auto discovery=") << sett.mqtt_auto_discovery);
+            LOG_INFO(F("retain=") << sett.mqtt_retain);
             LOG_INFO(F("discovery topic=") << sett.mqtt_discovery_topic);
 
             LOG_INFO(F("--- Network ---- "));
@@ -266,7 +268,7 @@ void calculate_values(Settings &sett, const AttinyData &data, CalculatedData &cd
         }
 
         if (sett.counter0_name == CounterName::ELECTRO)
-        {
+        { 
             // factor0 кол-во импульсов на 1 кВт * ч
             cdata.channel0 = sett.channel0_start + (data.impulses0 - sett.impulses0_start) / (sett.factor0 * 1.0);
             cdata.delta0 = (data.impulses0 - sett.impulses0_previous) / (sett.factor0 * 1.0);

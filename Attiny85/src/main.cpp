@@ -17,10 +17,15 @@
 TinyDebugSerial mySerial;
 #endif
 
-#define FIRMWARE_VER 32  // Передается в ESP и на сервер в данных.
 
 /*
 Версии прошивок
+
+33 - 2025.09.29 - dontsov
+    1. 250мс замыкание + 750мс размыкание = импульс
+	2. ADC замыкания теперь 150 ~2кОм. Был 170 ~3.5кОм 
+	LOG_ON=6820 bytes
+
 32 - 2023.11.17 - abrant
 	1. Добавлен тип входа "Датчик Холла", он требует питания, которое подается вместо второго канала.
 	2. Реализовано переключение типов входа.
@@ -136,13 +141,33 @@ TinyDebugSerial mySerial;
 static CounterB counter0(4, 2, 3); 	// Вход 1, Blynk: V0, горячая вода PB4 ADC2
 static CounterB counter1(3, 3); 	// Вход 2, Blynk: V1, холодная вода (или лог) PB3 ADC3
 
-static ButtonB button(2);  // PB2 кнопка (на линии SCL)
-						   // Долгое нажатие: ESP включает точку доступа с веб сервером для настройки
-						   // Короткое: ESP передает показания
 static ESPPowerPin esp(1); // Питание на ESP
 
-// Данные
-struct Header info = {FIRMWARE_VER, 0, 0, 0, {0, 0, WATERIUS_2C, {counter0.type, counter1.type}}, {0, 0}, {0, 0}, 0, 0};
+#if WATERIUS_MODEL == WATERIUS_MODEL_1
+static ButtonB button(2);  // PB2 кнопка (на линии SCL)
+                           // Долгое нажатие: ESP включает точку доступа с веб сервером для настройки
+                           // Короткое: ESP передает показания
+#endif
+#if WATERIUS_MODEL == WATERIUS_MODEL_2
+static ButtonB2 button(1);  // PB1 кнопка (на линии wakeup)
+                           // Долгое нажатие: ESP включает точку доступа с веб сервером для настройки
+                           // Короткое: ESP передает показания
+#endif
+
+// Данные - designated initializers для битовых полей
+struct Header info = {
+    .version = FIRMWARE_VER,
+    .service = 0,
+    .on_pulse0 = 0,
+    .on_pulse1 = 0,
+    .voltage = 0,
+    .reserved2 = 0,
+    .config = {0, 0, WATERIUS_MODEL, {counter0.type, counter1.type}},
+    .data = {0, 0},
+    .adc = {0, 0},
+    .crc = 0,
+    .reserved3 = 0
+};
 
 uint32_t wakeup_period;
 
@@ -184,12 +209,19 @@ inline void counting(CounterEvent ev)
 	{
 		info.data.value0++; 				//нужен т.к. при пробуждении запрашиваем данные
 		info.adc.adc0 = counter0.adc;
+#ifdef LOG_ON
+		LOG(F("Input0:"));
+		LOG(info.data.value0);
+		LOG(F("ADC0:"));
+		LOG(info.adc.adc0);
+#endif
 		if (storage_write_limit == 0)
 		{
 			storage.add(info.data);
 			storage_write_limit = 60*4;		// пишем в память не чаще раза в минуту
 		}
 	}
+	info.on_pulse0 = counter0.on_time > 0;
 #ifndef LOG_ON
 	if (counter1.is_impuls(ev))
 	{
@@ -201,6 +233,7 @@ inline void counting(CounterEvent ev)
 			storage_write_limit = 60*4;		// пишем в память не чаще раза в минуту
 		}
 	}
+	info.on_pulse1 = counter1.on_time > 0;
 #endif
 
 #ifdef COUNTER_DEBUG
@@ -220,7 +253,12 @@ void saveConfig()
 {
 	// записываем 2 раза чтобы полностью переписать хранилище
 	config.add(info.config);
-	config.add(info.config);	
+	config.add(info.config);
+}
+
+void extendWakeUpPeriod()
+{
+	esp.extend_wake_up();
 }
 
 //Запрос периода при инициализции. Также период может изменится после настройки.
@@ -260,7 +298,6 @@ void setup()
 	}
 
 	wakeup_period = WAKEUP_PERIOD_DEFAULT;
-
 	LOG_BEGIN(9600);
 	LOG(F("==== START ===="));
 	LOG(F("MCUSR"));
@@ -325,6 +362,8 @@ void loop()
 			WDTCR |= _BV(WDIE);
 			sleep_mode();
 		}
+
+		LOG_BEGIN(9600);
 	}
 
 	storage.add(info.data);
@@ -339,13 +378,12 @@ void loop()
 	// иначе ESP запустится в режиме программирования (кнопка на i2c и 2 пине ESP)
 	// Если кнопка не нажата или нажата коротко - передаем показания
 
-	unsigned long wake_up_limit;
+	unsigned long wake_up_limit = SETUP_TIME_MSEC;  // 10 мин при настройке
+
 	if (button.press == ButtonPressType::LONG)
 	{ 
 		LOG(F("SETUP pressed"));
 		slaveI2C.begin(SETUP_MODE);
-		wake_up_limit = SETUP_TIME_MSEC; // 10 мин при настройке
-
 		info.config.setup_started_counter++;
 		saveConfig();
 	}
@@ -358,16 +396,18 @@ void loop()
 		}
 		else
 		{
+			wake_up_limit = WAIT_ESP_MSEC; // 15 секунд при передаче данных
 			LOG(F("wake up for transmitting"));
 			slaveI2C.begin(TRANSMIT_MODE);
 		}
-		wake_up_limit = WAIT_ESP_MSEC; // 15 секунд при передаче данных
 	}
 
 	// Нажатие кнопки обработали и удаляем
-	button.press = ButtonPressType::NONE;
+	button.reset();
+	info.voltage = readVcc(); // Прочитаем Vcc после включения ESP
 
 	esp.power(true);
+
 	LOG(F("ESP turn on"));
 
 	uint8_t delay_loop_count = 0;		
